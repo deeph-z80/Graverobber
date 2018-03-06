@@ -1,0 +1,1 @@
+img_converter "palette.bmp" "tiles.bmp" "tiles.h"
