@@ -1,2 +1,3 @@
 REM img_converter "palette.bmp" "player.bmp" "player.h"
-img_converter "palette.bmp" "tiles.bmp" "tiles.h"
+REM img_converter "palette.bmp" "tiles.bmp" "tiles.h"
+img_converter "palette.bmp" "zombie.bmp" "zombie.h"
