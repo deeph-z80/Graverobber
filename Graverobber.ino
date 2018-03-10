@@ -1,9 +1,12 @@
 #include <Gamebuino-Meta.h>
 #include "sprites.h"
 
-#define TILE_SIZE     8
-#define ZOMBIE_HEIGHT 16
-#define ZOMBIE_AMOUNT 1
+#define TILE_SIZE         8
+#define ZOMBIE_HEIGHT     16
+#define ZOMBIE_AMOUNT     1
+#define ZOMBIE_TURN_DELAY 4
+
+uint8_t turn = 1;
 
 const uint8_t map01[] = {
   9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
@@ -40,20 +43,47 @@ const uint8_t map01[] = {
   9, 9, 9, 9, 4, 3, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9
 };
 
-struct camera_struct {
-  int16_t x, y;
+class camera_ {
+  public:
+    int16_t x, y;
+    void update();
 };
-camera_struct camera;
+camera_ camera;
 
-class map_struct {
+class map_ {
   public:
     const uint8_t *map_data;
     uint8_t width, height;
     void draw();
 };
-map_struct current_map;
+map_ current_map;
 
-void map_struct::draw() {
+class zombie_ {
+  public:
+    uint8_t x, y, animation, scrolling;
+    int8_t x_velocity, y_velocity, x_offset, y_offset;
+    boolean is_moving;
+    void draw(), handle();
+};
+zombie_ zombies[ZOMBIE_AMOUNT];
+
+class player_ {
+  public:
+    uint8_t x, y, direction, animation, scrolling;
+    int8_t x_velocity, y_velocity, x_offset, y_offset;
+    boolean is_moving;
+    void draw(), update();
+};
+player_ player;
+
+void camera_::update() {
+  x = player.x * TILE_SIZE - gb.display.width() / 2 + TILE_SIZE / 2 + player.x_offset;
+  x = camera.x * (x > 0) + (current_map.width * TILE_SIZE - gb.display.width() - x) * (x > current_map.width * TILE_SIZE - gb.display.width());
+  y = player.y * TILE_SIZE - gb.display.height() / 2 + TILE_SIZE / 2 + player.y_offset;
+  y = camera.y * (y > 0) + (current_map.height * TILE_SIZE - gb.display.height() - y) * (y > current_map.height * TILE_SIZE - gb.display.height());
+};
+
+void map_::draw() {
   for (byte y = 0; y <= gb.display.height() / TILE_SIZE + 1; y++) {
     for (byte x = 0; x <= gb.display.width() / TILE_SIZE + 1; x++) {
       int tile_x = camera.x / TILE_SIZE + x;
@@ -66,65 +96,82 @@ void map_struct::draw() {
   }
 }
 
-class zombie_struct {
-  public:
-    uint8_t x, y;
-    int8_t x_velocity, y_velocity, x_offset, y_offset;
-    void draw(), handle();
-};
-zombie_struct zombies[ZOMBIE_AMOUNT];
-
-void zombie_struct::draw() {
+void zombie_::draw() {
   zombie_sprite_set.setFrame(0);
   gb.display.drawImage(x * TILE_SIZE - camera.x + x_offset, y * TILE_SIZE - camera.y + y_offset - (ZOMBIE_HEIGHT - TILE_SIZE), zombie_sprite_set);
 }
 
 void zombies_draw() {
-  for (uint8_t i = 0; i <= ZOMBIE_AMOUNT-1; i++) {
+  for (uint8_t i = 0; i <= ZOMBIE_AMOUNT - 1; i++) {
     zombies[i].draw();
   }
 }
 
-void zombie_struct::handle() {
+void zombie_::handle() {
+  if(!is_moving){
+    scrolling = x_velocity = y_velocity = 0;
+    if(abs(x - player.x) > abs(y - player.y)){
+      x_velocity = (x < player.x) - (x > player.x);
+    }else{
+      y_velocity = (y < player.y) - (y > player.y);
+    }
+    is_moving = true;
+  }else{
+    scrolling++;
+    x_offset += x_velocity;
+    y_offset += y_velocity;
+    if(scrolling == TILE_SIZE){
+      x_offset = y_offset = 0;
+      is_moving = false;
+      x += x_velocity;
+      y += y_velocity;
+      turn++;
+    }
+  }
 };
 
-class player_struct {
-  public:
-    uint8_t x, y, direction, animation;
-    int8_t x_velocity, y_velocity, x_offset, y_offset;
-    void draw(), update();
-};
-player_struct player;
+void zombies_update() {
+  if (turn % ZOMBIE_TURN_DELAY == 0) {
+    uint8_t moving_counter = 0;
+    for (uint8_t i = 0; i <= ZOMBIE_AMOUNT - 1; i++) {
+      zombies[i].handle();
+      if(zombies[i].is_moving) moving_counter++;
+    }
+    if(moving_counter == 0) turn++;
+  }
+}
 
-void player_struct::draw() {
+void player_::draw() {
   player_sprite_set.setFrame(direction * 2 + animation);
   gb.display.drawImage(x * TILE_SIZE - camera.x + x_offset, y * TILE_SIZE - camera.y + y_offset, player_sprite_set);
 }
 
-void player_struct::update() {
-  x_velocity = -gb.buttons.repeat(BUTTON_LEFT, 1) * (x > 0) + gb.buttons.repeat(BUTTON_RIGHT, 1) * (x < current_map.width - 1);
-  y_velocity = -gb.buttons.repeat(BUTTON_UP, 1) * (y > 0) + gb.buttons.repeat(BUTTON_DOWN, 1) * (y < current_map.height - 1);
-  if (!x_velocity != !y_velocity) {
-    direction = (1 + x_velocity) * (x_velocity != 0);
-    direction = (2 + y_velocity) * (y_velocity != 0 || direction == 0);
-    for (uint8_t i = 1; i <= TILE_SIZE; i++) {
-      animation += i % 2;
-      animation *= animation < 2 && i < TILE_SIZE;
-      x_offset = i * x_velocity;
-      y_offset = i * y_velocity;
-      camera.x = player.x * TILE_SIZE - gb.display.width() / 2 + TILE_SIZE / 2 + x_offset;
-      camera.x = camera.x * (camera.x > 0) + (current_map.width * TILE_SIZE - gb.display.width() - camera.x) * (camera.x > current_map.width * TILE_SIZE - gb.display.width());
-      camera.y = player.y * TILE_SIZE - gb.display.height() / 2 + TILE_SIZE / 2 + y_offset;
-      camera.y = camera.y * (camera.y > 0) + (current_map.height * TILE_SIZE - gb.display.height() - camera.y) * (camera.y > current_map.height * TILE_SIZE - gb.display.height());
-      current_map.draw();
-      player.draw();
-      zombies_draw();
-      while (!gb.update());
+void player_::update() {
+  if(turn % ZOMBIE_TURN_DELAY != 0){
+    if(!is_moving){
+      x_velocity = y_velocity = 0;
+      x_velocity = -gb.buttons.repeat(BUTTON_LEFT, 1) * (x > 0) + gb.buttons.repeat(BUTTON_RIGHT, 1) * (x < current_map.width - 1);
+      y_velocity = -gb.buttons.repeat(BUTTON_UP, 1) * (y > 0) + gb.buttons.repeat(BUTTON_DOWN, 1) * (y < current_map.height - 1);
+      if (!x_velocity != !y_velocity) {
+        direction = (1 + x_velocity) * (x_velocity != 0);
+        direction = (2 + y_velocity) * (y_velocity != 0 || direction == 0);
+        is_moving = true;
+      }
+    }else{
+      scrolling++;
+      animation += scrolling % 2;
+      animation *= animation < 2 && scrolling < TILE_SIZE;
+      x_offset += x_velocity;
+      y_offset += y_velocity;
+      if(scrolling == TILE_SIZE){
+        scrolling = x_offset = y_offset = 0;
+        is_moving = false;
+        x += x_velocity;
+        y += y_velocity;
+        turn++;
+      }
     }
-    x += x_velocity;
-    y += y_velocity;
   }
-  x_velocity = y_velocity = 0;
 }
 
 void setup() {
@@ -134,13 +181,18 @@ void setup() {
   camera.x = camera.y = 0;
   player.x = player.y = 4;
   player.direction = player.animation = 0;
+  player.is_moving = false;
   zombies[0].x = zombies[0].y = 5;
 }
 
 void loop() {
   while (true) {
-    if (gb.update()) {
-      player.update();
-    }
+    player.update();
+    zombies_update();
+    camera.update();
+    current_map.draw();
+    player.draw();
+    zombies_draw();
+    while (!gb.update());
   }
 }
