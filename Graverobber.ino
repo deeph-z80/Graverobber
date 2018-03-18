@@ -1,12 +1,18 @@
 #include <Gamebuino-Meta.h>
+
+#define TILE_SIZE                 8
+#define TILE_BLOCKING_LIMIT       9
+#define PLAYER_HEIGHT             13+2 // +2 to "center" the sprite on the tile
+#define ZOMBIE_HEIGHT             11+2
+#define ZOMBIE_AMOUNT             2
+#define ZOMBIE_TURN_DELAY         4
+#define ZOMBIE_PROXIMITY_TRIGGER  20
+#define ZOMBIE_MOVES_ATTEMPTS     3
+#define ZOMBIES_ANIMATION_SPEED   4
+
 #include "sprites.h"
 
-#define TILE_SIZE         8
-#define ZOMBIE_HEIGHT     16
-#define ZOMBIE_AMOUNT     1
-#define ZOMBIE_TURN_DELAY 4
-
-uint8_t turn = 1;
+uint32_t turn = 1;
 
 const uint8_t map01[] = {
   9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
@@ -52,7 +58,7 @@ camera_ camera;
 
 class map_ {
   public:
-    const uint8_t *map_data;
+    const uint8_t *data;
     uint8_t width, height;
     void draw();
 };
@@ -60,9 +66,9 @@ map_ current_map;
 
 class zombie_ {
   public:
-    uint8_t x, y, animation, scrolling;
+    uint8_t x, y, direction, animation, scrolling;
     int8_t x_velocity, y_velocity, x_offset, y_offset;
-    boolean is_moving;
+    boolean is_moving, has_ended_turn;
     void draw(), handle();
 };
 zombie_ zombies[ZOMBIE_AMOUNT];
@@ -89,7 +95,7 @@ void map_::draw() {
       int tile_x = camera.x / TILE_SIZE + x;
       int tile_y = camera.y / TILE_SIZE + y;
       if (tile_x >= 0 && tile_x < width && tile_y >= 0 && tile_y < height) {
-        tile_set.setFrame(map_data[tile_y * width + tile_x]);
+        tile_set.setFrame(data[tile_y * width + tile_x]);
         gb.display.drawImage(x * TILE_SIZE - camera.x % TILE_SIZE, y * TILE_SIZE - camera.y % TILE_SIZE, tile_set);
       }
     }
@@ -97,7 +103,9 @@ void map_::draw() {
 }
 
 void zombie_::draw() {
-  zombie_sprite_set.setFrame(0);
+  animation += (gb.frameCount % ZOMBIES_ANIMATION_SPEED == 0);
+  animation *= animation < 3;
+  zombie_sprite_set.setFrame(direction * 3 + animation);
   gb.display.drawImage(x * TILE_SIZE - camera.x + x_offset, y * TILE_SIZE - camera.y + y_offset - (ZOMBIE_HEIGHT - TILE_SIZE), zombie_sprite_set);
 }
 
@@ -108,24 +116,60 @@ void zombies_draw() {
 }
 
 void zombie_::handle() {
-  if(!is_moving){
-    scrolling = x_velocity = y_velocity = 0;
-    if(abs(x - player.x) > abs(y - player.y)){
-      x_velocity = (x < player.x) - (x > player.x);
-    }else{
-      y_velocity = (y < player.y) - (y > player.y);
-    }
-    is_moving = true;
-  }else{
-    scrolling++;
-    x_offset += x_velocity;
-    y_offset += y_velocity;
-    if(scrolling == TILE_SIZE){
-      x_offset = y_offset = 0;
-      is_moving = false;
-      x += x_velocity;
-      y += y_velocity;
-      turn++;
+  if (!has_ended_turn) {
+    if (!is_moving) {
+      x_velocity = y_velocity = 0;
+      //if (abs(x - player.x) <= ZOMBIE_PROXIMITY_TRIGGER && abs(y - player.y) <= ZOMBIE_PROXIMITY_TRIGGER) {
+      if (abs(x - player.x) > abs(y - player.y)) {
+        x_velocity = (x < player.x) - (x > player.x);
+      } else {
+        y_velocity = (y < player.y) - (y > player.y);
+      }
+      /*} else {
+        if (random(2)) {
+          x_velocity = random(2);
+          x_velocity -= (x_velocity == 0);
+        } else {
+          y_velocity = random(2);
+          y_velocity -= (y_velocity == 0);
+        }
+        }*/
+      uint8_t attempts = 0;
+      do {
+        if (current_map.data[(y + y_velocity) * current_map.width + x + x_velocity] < TILE_BLOCKING_LIMIT &&
+            !zombies_collide(x + x_velocity, y + y_velocity) &&
+            (player.x != x + x_velocity && player.y != y + y_velocity)) {
+          is_moving = true;
+        } else {
+          x_velocity = y_velocity = 0;
+          attempts++;
+          if (random(2)) {
+            x_velocity = random(2);
+            x_velocity -= (x_velocity == 0);
+          } else {
+            y_velocity = random(2);
+            y_velocity -= (y_velocity == 0);
+          }
+        }
+        if (attempts > ZOMBIE_MOVES_ATTEMPTS) {
+          x_velocity = y_velocity = 0;
+          has_ended_turn = true;
+          break;
+        }
+      } while (!is_moving);
+      direction = (1 + x_velocity) * (x_velocity != 0);
+      direction = (2 + y_velocity) * (y_velocity != 0 || direction == 0);
+    } else {
+      scrolling++;
+      x_offset += x_velocity;
+      y_offset += y_velocity;
+      if (scrolling == TILE_SIZE) {
+        scrolling = x_offset = y_offset = 0;
+        is_moving = false;
+        has_ended_turn = true;
+        x += x_velocity;
+        y += y_velocity;
+      }
     }
   }
 };
@@ -135,35 +179,63 @@ void zombies_update() {
     uint8_t moving_counter = 0;
     for (uint8_t i = 0; i <= ZOMBIE_AMOUNT - 1; i++) {
       zombies[i].handle();
-      if(zombies[i].is_moving) moving_counter++;
+      if (!zombies[i].has_ended_turn) moving_counter++;
     }
-    if(moving_counter == 0) turn++;
+    if (moving_counter == 0) {
+      for (uint8_t i = 0; i <= ZOMBIE_AMOUNT - 1; i++) {
+        zombies[i].has_ended_turn = false;
+      }
+      turn++;
+    }
   }
 }
 
+uint8_t zombies_find_index(uint8_t x, uint8_t y) {
+  for (uint8_t i = 0; i < ZOMBIE_AMOUNT; i++) {
+    if (zombies[i].x + zombies[i].x_velocity == x && zombies[i].y + zombies[i].y_velocity == y) return i;
+  }
+}
+
+boolean zombies_collide(uint8_t x, uint8_t y) {
+  for (uint8_t i = 0; i < ZOMBIE_AMOUNT; i++) {
+    if(zombies_find_index(x, y) != i){
+      if (zombies[i].x + zombies[i].x_velocity == x && zombies[i].y + zombies[i].y_velocity == y) return true;
+    }
+  }
+  return false;
+}
+
+boolean zombies_collide_with_player(uint8_t x, uint8_t y) {
+  for (uint8_t i = 0; i < ZOMBIE_AMOUNT; i++) {
+    if (zombies[i].x == x && zombies[i].y == y) return true;
+  }
+  return false;
+}
+
 void player_::draw() {
-  player_sprite_set.setFrame(direction * 2 + animation);
-  gb.display.drawImage(x * TILE_SIZE - camera.x + x_offset, y * TILE_SIZE - camera.y + y_offset, player_sprite_set);
+  player_sprite_set.setFrame(direction * 3 + animation);
+  gb.display.drawImage(x * TILE_SIZE - camera.x + x_offset, y * TILE_SIZE - camera.y + y_offset - (PLAYER_HEIGHT - TILE_SIZE), player_sprite_set);
 }
 
 void player_::update() {
-  if(turn % ZOMBIE_TURN_DELAY != 0){
-    if(!is_moving){
+  if (turn % ZOMBIE_TURN_DELAY != 0) {
+    if (!is_moving) {
       x_velocity = y_velocity = 0;
       x_velocity = -gb.buttons.repeat(BUTTON_LEFT, 1) * (x > 0) + gb.buttons.repeat(BUTTON_RIGHT, 1) * (x < current_map.width - 1);
       y_velocity = -gb.buttons.repeat(BUTTON_UP, 1) * (y > 0) + gb.buttons.repeat(BUTTON_DOWN, 1) * (y < current_map.height - 1);
       if (!x_velocity != !y_velocity) {
         direction = (1 + x_velocity) * (x_velocity != 0);
         direction = (2 + y_velocity) * (y_velocity != 0 || direction == 0);
-        is_moving = true;
+        if (current_map.data[(y + y_velocity) * current_map.width + x + x_velocity] < TILE_BLOCKING_LIMIT &&
+            !zombies_collide_with_player(x + x_velocity, y + y_velocity)) is_moving = true;
       }
-    }else{
+    } else {
       scrolling++;
       animation += scrolling % 2;
-      animation *= animation < 2 && scrolling < TILE_SIZE;
+      animation *= animation < 3 && scrolling < TILE_SIZE;
       x_offset += x_velocity;
       y_offset += y_velocity;
-      if(scrolling == TILE_SIZE){
+      if (scrolling == TILE_SIZE) {
         scrolling = x_offset = y_offset = 0;
         is_moving = false;
         x += x_velocity;
@@ -176,13 +248,18 @@ void player_::update() {
 
 void setup() {
   gb.begin();
-  current_map.map_data = map01;
+  current_map.data = map01;
   current_map.width = current_map.height = 32;
   camera.x = camera.y = 0;
   player.x = player.y = 4;
   player.direction = player.animation = 0;
   player.is_moving = false;
   zombies[0].x = zombies[0].y = 5;
+  zombies[0].direction = zombies[0].x_velocity = zombies[0].y_velocity = 0;
+  zombies[0].is_moving = zombies[0].has_ended_turn = false;
+  zombies[1].x = zombies[1].y = 8;
+  zombies[1].direction = zombies[1].x_velocity = zombies[1].y_velocity = 0;
+  zombies[1].is_moving = zombies[1].has_ended_turn = false;
 }
 
 void loop() {
@@ -193,6 +270,12 @@ void loop() {
     current_map.draw();
     player.draw();
     zombies_draw();
+
+    // debug
+    gb.display.setColor(WHITE);
+    gb.display.setCursor(0, 0);
+    gb.display.print(turn);
+
     while (!gb.update());
   }
 }
