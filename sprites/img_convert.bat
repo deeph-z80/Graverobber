@@ -1,3 +1,4 @@
-REM img_converter "palette.bmp" "player.bmp" "player.h"
-REM img_converter "palette.bmp" "tiles.bmp" "tiles.h"
-img_converter "palette.bmp" "zombie.bmp" "zombie.h"
+REM img_converter "palette.bmp" "player.bmp" "out.txt"
+REM img_converter "palette.bmp" "tiles.bmp" "out.txt"
+REM img_converter "palette.bmp" "zombie.bmp" "out.txt"
+img_converter "palette.bmp" "fog.bmp" "out.txt"

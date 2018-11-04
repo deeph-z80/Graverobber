@@ -9,9 +9,11 @@
 #define ZOMBIE_PROXIMITY_TRIGGER  20
 #define ZOMBIE_MOVES_ATTEMPTS     3
 #define ZOMBIES_ANIMATION_SPEED   4
+#define FOG_DISTANCE              3
 
 #include "sprites.h"
 
+int music = -1;
 uint32_t turn = 1;
 
 const uint8_t map01[] = {
@@ -60,7 +62,7 @@ class map_ {
   public:
     const uint8_t *data;
     uint8_t width, height;
-    void draw();
+    void draw(), draw_fog();
 };
 map_ current_map;
 
@@ -92,11 +94,25 @@ void camera_::update() {
 void map_::draw() {
   for (byte y = 0; y <= gb.display.height() / TILE_SIZE + 1; y++) {
     for (byte x = 0; x <= gb.display.width() / TILE_SIZE + 1; x++) {
-      int tile_x = camera.x / TILE_SIZE + x;
-      int tile_y = camera.y / TILE_SIZE + y;
-      if (tile_x >= 0 && tile_x < width && tile_y >= 0 && tile_y < height) {
+      int8_t tile_x = camera.x / TILE_SIZE + x;
+      int8_t tile_y = camera.y / TILE_SIZE + y;
+      //if (tile_x >= 0 && tile_x < width && tile_y >= 0 && tile_y < height) {
         tile_set.setFrame(data[tile_y * width + tile_x]);
-        gb.display.drawImage(x * TILE_SIZE - camera.x % TILE_SIZE, y * TILE_SIZE - camera.y % TILE_SIZE, tile_set);
+        tile_x = x * TILE_SIZE - camera.x % TILE_SIZE;
+        tile_y = y * TILE_SIZE - camera.y % TILE_SIZE;
+        gb.display.drawImage(tile_x, tile_y, tile_set);
+      //}
+    }
+  }
+}
+
+void map_::draw_fog() {
+  for (byte y = 0; y <= gb.display.height() + TILE_SIZE; y += TILE_SIZE) {
+    for (byte x = 0; x <= gb.display.width() + TILE_SIZE; x += TILE_SIZE) {
+      int8_t fog_dist = sqrt(sq(player.x * TILE_SIZE + player.x_offset - camera.x - x) + sq(player.y * TILE_SIZE + player.y_offset - camera.y - y)) + TILE_SIZE / 2;
+      if (fog_dist > (FOG_DISTANCE - 1) * TILE_SIZE) {
+        fog_sprite_set.setFrame((fog_dist > (FOG_DISTANCE + 1) * TILE_SIZE) + 2 * (fog_dist == (FOG_DISTANCE + 1) * TILE_SIZE) + 3 * (fog_dist == FOG_DISTANCE * TILE_SIZE) - 1);
+        gb.display.drawImage(x, y, fog_sprite_set);
       }
     }
   }
@@ -198,7 +214,7 @@ uint8_t zombies_find_index(uint8_t x, uint8_t y) {
 
 boolean zombies_collide(uint8_t x, uint8_t y) {
   for (uint8_t i = 0; i < ZOMBIE_AMOUNT; i++) {
-    if(zombies_find_index(x, y) != i){
+    if (zombies_find_index(x, y) != i) {
       if (zombies[i].x + zombies[i].x_velocity == x && zombies[i].y + zombies[i].y_velocity == y) return true;
     }
   }
@@ -248,6 +264,7 @@ void player_::update() {
 
 void setup() {
   gb.begin();
+  gb.setFrameRate(50);
   current_map.data = map01;
   current_map.width = current_map.height = 32;
   camera.x = camera.y = 0;
@@ -263,6 +280,7 @@ void setup() {
 }
 
 void loop() {
+  music = gb.sound.play("music/cruising_for_goblins.wav", true);
   while (true) {
     player.update();
     zombies_update();
@@ -270,11 +288,12 @@ void loop() {
     current_map.draw();
     player.draw();
     zombies_draw();
+    current_map.draw_fog();
 
     // debug
-    gb.display.setColor(WHITE);
-    gb.display.setCursor(0, 0);
-    gb.display.print(turn);
+    /*gb.display.setColor(WHITE);
+      gb.display.setCursor(0, 0);
+      gb.display.print(turn);*/
 
     while (!gb.update());
   }
